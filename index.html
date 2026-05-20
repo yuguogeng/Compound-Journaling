@@ -1,0 +1,1691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Compound">
+  <meta name="theme-color" content="#1D9E75">
+  <title>Compound Journal</title>
+
+  <!-- ============================================================
+       FIREBASE SETUP — REPLACE THESE VALUES WITH YOUR OWN
+       Steps:
+       1. Go to https://console.firebase.google.com
+       2. Create a project (e.g. "compound-journal")
+       3. Add a Web App — copy the firebaseConfig below
+       4. In Firestore, create a database (Start in test mode for now)
+       ============================================================ -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, doc, setDoc, getDoc, getDocs, deleteDoc, collection, writeBatch }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // ⚠️  PASTE YOUR FIREBASE CONFIG HERE ⚠️
+    const firebaseConfig = {
+      apiKey:            "AIzaSyB7GT1TwsR2WBHD6oDm9wDEsMkHXcFgU4Y",
+      authDomain:        "compound-journaling.firebaseapp.com",
+      projectId:         "compound-journaling",
+      storageBucket:     "compound-journaling.firebasestorage.app",
+      messagingSenderId: "915998722177",
+      appId:             "1:915998722177:web:5279866da53d78add02580"
+    };
+    // ⚠️  END OF CONFIG ⚠️
+
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
+
+    // Expose db helpers to the global scope used by the rest of the app
+    window._fb = {
+      async loadAll() {
+        try {
+          const snap = await getDocs(collection(db, "entries"));
+          const result = {};
+          snap.forEach(d => { result[d.id] = d.data(); });
+          return result;
+        } catch(e) {
+          console.error("Firebase loadAll:", e);
+          return null;
+        }
+      },
+      async save(date, data) {
+        try {
+          await setDoc(doc(db, "entries", date), data);
+          return true;
+        } catch(e) {
+          console.error("Firebase save:", e);
+          return false;
+        }
+      },
+      async remove(date) {
+        try {
+          await deleteDoc(doc(db, "entries", date));
+          return true;
+        } catch(e) {
+          console.error("Firebase remove:", e);
+          return false;
+        }
+      },
+      async clearAll(dates) {
+        try {
+          const batch = writeBatch(db);
+          dates.forEach(date => batch.delete(doc(db, "entries", date)));
+          await batch.commit();
+          return true;
+        } catch(e) {
+          console.error("Firebase clearAll:", e);
+          return false;
+        }
+      }
+    };
+
+    // Fire init once Firebase is ready
+    document.addEventListener("DOMContentLoaded", () => {
+      if (typeof init === "function") init();
+    });
+  </script>
+
+  <style>
+    :root {
+      --app-bg: #F1EFE8;
+      --card-bg: #F8F8F6;
+      --border: rgba(0,0,0,0.1);
+      --border-strong: rgba(0,0,0,0.18);
+      --text: #111;
+      --muted: #555;
+      --faint: #888;
+      --green: #1D9E75;
+      --green-bg: #E1F5EE;
+      --green-soft: #D9F2E8;
+      --amber: #BA7517;
+      --amber-bg: #FAEEDA;
+      --red: #E24B4A;
+      --red-bg: #FCEBEB;
+      --blue: #185FA5;
+      --blue-bg: #E6F1FB;
+      --purple: #6F4BC4;
+      --purple-bg: #EEE8FB;
+      --shadow: 0 24px 80px rgba(37, 33, 24, 0.18);
+      --radius: 8px;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { min-height: 100%; background: var(--app-bg); }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      color: var(--text);
+      background:
+        linear-gradient(135deg, rgba(29,158,117,0.08), transparent 34%),
+        linear-gradient(315deg, rgba(24,95,165,0.07), transparent 32%),
+        var(--app-bg);
+      font-family: var(--font);
+      letter-spacing: 0;
+    }
+
+    button, input, textarea { font: inherit; }
+    button { border: 0; cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: 0.42; }
+
+    .hidden { display: none !important; }
+
+    /* ── Sync status banner ── */
+    #sync-banner {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 60;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 800;
+      text-align: center;
+      display: none;
+      transition: background 300ms;
+    }
+    #sync-banner.syncing { display: block; background: var(--amber-bg); color: #412402; }
+    #sync-banner.error   { display: block; background: var(--red-bg);   color: #501313; }
+    #sync-banner.ok      { display: block; background: var(--green-bg); color: #085041; }
+
+    /* ── Lock screen ── */
+    .lock-screen {
+      position: fixed; inset: 0; z-index: 40;
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px; background: var(--app-bg);
+    }
+    .lock-card {
+      width: min(100%, 360px); padding: 24px;
+      border: 1px solid var(--border); border-radius: 12px;
+      background: var(--card-bg); box-shadow: var(--shadow);
+    }
+    .lock-brand {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 18px; font-weight: 800;
+    }
+    .brand-dot {
+      width: 12px; height: 12px; border-radius: 999px;
+      background: var(--green); box-shadow: 0 0 0 6px var(--green-bg); flex: 0 0 auto;
+    }
+    .lock-title { margin: 0; font-size: 26px; line-height: 1.08; }
+    .lock-subtitle { margin: 8px 0 20px; color: var(--muted); font-size: 14px; }
+    .pin-dots { display: flex; justify-content: center; gap: 12px; margin: 18px 0 10px; }
+    .pin-dot {
+      width: 14px; height: 14px; border-radius: 999px;
+      border: 1px solid var(--border-strong); background: transparent;
+      transition: background 160ms ease, border-color 160ms ease;
+    }
+    .pin-dot.filled { border-color: var(--green); background: var(--green); }
+    .pin-dots.error .pin-dot { border-color: var(--red); background: var(--red); }
+    .pin-dots.shake { animation: shake 360ms ease; }
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      20% { transform: translateX(-10px); }
+      40% { transform: translateX(8px); }
+      60% { transform: translateX(-6px); }
+      80% { transform: translateX(4px); }
+    }
+    .pin-error { min-height: 20px; margin: 0 0 16px; color: var(--red); text-align: center; font-size: 13px; font-weight: 700; }
+    .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .keypad button {
+      min-height: 58px; border: 1px solid var(--border); border-radius: var(--radius);
+      background: white; color: var(--text); font-size: 20px; font-weight: 800;
+    }
+    .keypad button:hover, .keypad button:focus-visible {
+      outline: none; border-color: var(--green); background: var(--green-bg);
+    }
+    .keypad .key-blank { pointer-events: none; border-color: transparent; background: transparent; }
+
+    /* ── App shell ── */
+    .app-shell {
+      width: 100%; min-height: 100vh;
+      max-width: 480px; margin: 0 auto;
+      display: flex; flex-direction: column; background: var(--card-bg);
+    }
+    .sidebar, .ai-panel { display: none; }
+    .main-panel { min-width: 0; flex: 1; display: flex; flex-direction: column; background: var(--card-bg); }
+
+    .screen-header {
+      position: sticky; top: 0; z-index: 8;
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 12px; padding: 16px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(248,248,246,0.96); backdrop-filter: blur(14px);
+    }
+    .kicker { color: var(--faint); font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+    .screen-header h1 { margin: 2px 0 0; font-size: 21px; line-height: 1.15; }
+
+    .save-indicator {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 82px; height: 30px; padding: 0 10px;
+      border-radius: 999px; border: 1px solid var(--border);
+      color: var(--faint); background: white; font-size: 12px; font-weight: 800; white-space: nowrap;
+    }
+    .save-indicator.saving { color: var(--amber); background: var(--amber-bg); border-color: rgba(186,117,23,0.28); }
+    .save-indicator.saved  { color: var(--green); background: var(--green-bg); border-color: rgba(29,158,117,0.28); }
+    .save-indicator.error  { color: var(--red);   background: var(--red-bg);   border-color: rgba(226,75,74,0.28); }
+
+    .main-content { flex: 1; padding: 16px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+    .bottom-nav {
+      position: sticky; bottom: 0; z-index: 12;
+      display: flex;
+      border-top: 1px solid var(--border);
+      background: rgba(248,248,246,0.98); backdrop-filter: blur(14px);
+      padding-bottom: var(--safe-bottom);
+    }
+    .bottom-nav button {
+      flex: 1; min-width: 0; min-height: 62px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 4px; color: var(--muted); background: transparent; font-size: 11px; font-weight: 800;
+    }
+    .bottom-nav i { font-size: 20px; }
+    .bottom-nav button.active { color: var(--green); background: var(--green-bg); }
+
+    /* ── Layout pieces ── */
+    .entry-step, .view-stack { display: flex; flex-direction: column; gap: 14px; }
+    .step-top { display: flex; flex-direction: column; gap: 10px; }
+    .pip-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .pip { height: 6px; border-radius: 999px; background: rgba(0,0,0,0.08); overflow: hidden; }
+    .pip.on { background: var(--green); }
+    .step-label { color: var(--muted); font-size: 13px; font-weight: 800; }
+
+    .card, .hcard, .stat-card, .list-row, .sheet-panel, .done-card {
+      border: 1px solid var(--border); border-radius: var(--radius); background: white;
+    }
+    .card { padding: 14px; }
+    .card h2, .card h3 { margin: 0 0 12px; font-size: 14px; letter-spacing: 0; }
+    .section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .section-title h2, .section-title h3 { margin: 0; }
+    .muted { color: var(--muted); }
+    .tiny { color: var(--faint); font-size: 12px; font-weight: 700; }
+    .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .between { justify-content: space-between; }
+    .stack { display: flex; flex-direction: column; gap: 10px; }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .chip, .label-chip, .quality-btn, .rating-btn, .small-btn, .primary-btn, .ghost-btn, .danger-btn {
+      min-height: 38px; display: inline-flex; align-items: center; justify-content: center;
+      gap: 7px; border: 1px solid var(--border); border-radius: var(--radius);
+      background: white; color: var(--text); font-size: 13px; font-weight: 800; text-align: center;
+    }
+    .chip, .label-chip { padding: 0 11px; }
+    .chip.active { border-color: var(--green); color: #085041; background: var(--green-bg); }
+    .chip.purple.active, .tag-chip.active { border-color: var(--purple); color: #32145F; background: var(--purple-bg); }
+    .chip.red.active { border-color: var(--red); color: #501313; background: var(--red-bg); }
+    .chip.amber.active { border-color: var(--amber); color: #412402; background: var(--amber-bg); }
+    .chip.full { width: 100%; }
+    .primary-btn { min-height: 44px; padding: 0 16px; border-color: var(--green); color: white; background: var(--green); }
+    .ghost-btn { min-height: 44px; padding: 0 14px; color: var(--muted); background: white; }
+    .danger-btn { min-height: 44px; padding: 0 14px; border-color: rgba(226,75,74,0.35); color: #501313; background: var(--red-bg); }
+    .small-btn { min-height: 32px; padding: 0 10px; font-size: 12px; }
+
+    .step-nav {
+      position: sticky; bottom: 10px; z-index: 5;
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 10px;
+      padding: 8px; border: 1px solid var(--border); border-radius: 12px;
+      background: rgba(248,248,246,0.94); backdrop-filter: blur(14px);
+    }
+    .step-nav .ghost-btn, .step-nav .primary-btn { width: 100%; }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label { color: var(--muted); font-size: 12px; font-weight: 800; }
+
+    input[type="text"], input[type="number"], input[type="time"], textarea {
+      width: 100%; min-height: 40px; border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 9px 10px; background: white; color: var(--text); outline: none;
+    }
+    textarea { resize: vertical; line-height: 1.45; }
+    input:focus, textarea:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(29,158,117,0.16); }
+    input.narrow { width: 72px; flex: 0 0 72px; text-align: center; }
+    input[type="range"] { width: 100%; accent-color: var(--green); }
+
+    .sleep-display { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .sleep-number { font-size: 42px; line-height: 1; font-weight: 900; letter-spacing: 0; }
+
+    .badge, .label-badge, .tag-chip, .quality-badge {
+      display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+      max-width: 100%; min-height: 26px; padding: 0 8px;
+      border: 1px solid var(--border); border-radius: 999px; background: white;
+      color: var(--muted); font-size: 12px; font-weight: 800; white-space: nowrap;
+    }
+    .badge.green, .quality-badge.good { border-color: rgba(29,158,117,0.28); color: #085041; background: var(--green-bg); }
+    .badge.amber, .quality-badge.okay { border-color: rgba(186,117,23,0.28); color: #412402; background: var(--amber-bg); }
+    .badge.red,   .quality-badge.tough { border-color: rgba(226,75,74,0.28);  color: #501313; background: var(--red-bg); }
+    .badge.blue { border-color: rgba(24,95,165,0.28); color: #042C53; background: var(--blue-bg); }
+
+    .alcohol-card { padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card-bg); }
+    .big-count { display: flex; align-items: baseline; gap: 7px; margin: 8px 0; }
+    .big-count strong { font-size: 42px; line-height: 1; }
+
+    .progress-line { display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: center; gap: 10px; width: 100%; }
+    .progress-track, .tl-bar, .breakdown-bar { width: 100%; height: 10px; display: flex; overflow: hidden; border-radius: 999px; background: rgba(0,0,0,0.08); }
+    .progress-fill { height: 100%; border-radius: 999px; background: var(--green); transition: width 180ms ease; }
+
+    .rating-row { display: flex; gap: 8px; }
+    .rating-btn { flex: 1; padding: 0; min-width: 0; color: var(--muted); background: var(--card-bg); }
+    .rating-btn.active { border-color: var(--green); color: #085041; background: var(--green-bg); }
+
+    .task-list { display: flex; flex-direction: column; gap: 8px; }
+    .task-order-num { width:24px; display:inline-flex; align-items:center; justify-content:center; font-size:13px; font-weight:900; color:var(--faint); padding-top:5px; }
+    .task-row {
+      display: grid; grid-template-columns: 24px 30px minmax(0, 1fr) 34px auto;
+      align-items: start; gap: 8px; padding: 10px;
+      border: 1px solid var(--border); border-radius: var(--radius); background: white;
+    }
+    .task-row.dragging { opacity: 0.55; }
+    .grip { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius); color: var(--faint); background: var(--card-bg); touch-action: none; cursor: grab; }
+    .check-dot { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: 999px; background: white; color: transparent; flex: 0 0 auto; }
+    .check-dot.done { border-color: var(--green); color: white; background: var(--green); }
+    .task-main { min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+    .task-text { min-width: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 800; }
+    .task-text.done { color: var(--faint); text-decoration: line-through; }
+    .task-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tag-chip { border-color: rgba(111,75,196,0.22); color: #32145F; background: var(--purple-bg); }
+    .tag-chip.add { color: var(--muted); background: white; border-style: dashed; }
+    .carried-badge { border-color: rgba(186,117,23,0.3); color: #412402; background: var(--amber-bg); }
+    .add-task { width: 100%; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px dashed var(--border-strong); border-radius: var(--radius); background: rgba(255,255,255,0.58); color: var(--muted); font-weight: 800; }
+    .inline-add { display: grid; grid-template-columns: minmax(0, 1fr) 42px 70px; gap: 8px; padding: 10px; border: 1px dashed var(--border-strong); border-radius: var(--radius); background: white; }
+    .inline-add button { min-width: 0; padding: 0; }
+
+    .breakdown-bar { height: 12px; margin-bottom: 8px; }
+    .breakdown-segment { min-width: 2px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px; }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 800; }
+    .legend-swatch { width: 10px; height: 10px; border-radius: 999px; }
+
+    .hint-strip { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border: 1px solid rgba(186,117,23,0.26); border-radius: var(--radius); color: #412402; background: var(--amber-bg); font-size: 13px; font-weight: 800; }
+
+    /* ── Unified Tasks + Blocks layout ── */
+    .unified-layout { display: flex; flex-direction: column; gap: 0; }
+    .block-section {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      background: white; margin-bottom: 10px; overflow: hidden;
+      transition: box-shadow 150ms;
+    }
+    .block-section.block-drop-active { box-shadow: 0 0 0 2px var(--green); }
+    .block-section-head {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px; background: var(--card-bg);
+      border-bottom: 1px solid var(--border);
+    }
+    .block-sec-icon { width: 28px; text-align: center; font-size: 18px; flex: 0 0 auto; }
+    .block-task-list { display: flex; flex-direction: column; gap: 0; }
+    .block-task-row { border-radius: 0; border-left: 0; border-right: 0; border-top: 0; border-bottom: 1px solid var(--border); }
+    .block-task-row:last-child { border-bottom: 0; }
+    .block-empty-drop {
+      padding: 12px 14px; color: var(--faint); font-size: 12px;
+      font-weight: 700; font-style: italic; text-align: center;
+      border: 1.5px dashed var(--border); border-radius: var(--radius);
+      margin: 8px; background: var(--card-bg);
+    }
+    .block-note-ta {
+      width: 100%; border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 7px 10px; background: var(--card-bg); color: var(--text);
+      font: inherit; outline: none; resize: none; font-size: 12px;
+    }
+    .block-note-ta:focus { border-color: var(--green); box-shadow: 0 0 0 2px rgba(29,158,117,0.14); }
+
+    .sheet-root { position: fixed; inset: 0; z-index: 30; display: flex; align-items: flex-end; justify-content: center; background: rgba(17,17,17,0.32); padding: 14px; }
+    .sheet-panel { width: min(100%, 520px); max-height: 84vh; overflow: auto; padding: 14px; box-shadow: var(--shadow); }
+    .sheet-panel [data-action] i, .tag-del i, .icon-passive { pointer-events: none; }
+    span[aria-hidden] { pointer-events: none; user-select: none; }
+    .sheet-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .sheet-head h3 { margin: 0; font-size: 16px; }
+    .sheet-section { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-top: 1px solid var(--border); }
+    .pool-row { display: grid; grid-template-columns: minmax(0, 1fr) 42px; gap: 8px; align-items: center; }
+    .pool-row .tag-chip { width: 100%; justify-content: flex-start; }
+    .pool-row .danger-btn { width: 42px; padding: 0; }
+    [data-action] { cursor: pointer; }
+
+    .block-card { border: 1px solid var(--border); border-radius: var(--radius); background: white; overflow: hidden; }
+    .block-head { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 12px; text-align: left; background: white; cursor: pointer; }
+    .block-icon { width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius); color: var(--green); background: var(--green-bg); font-size: 20px; }
+    .block-title { min-width: 0; }
+    .block-title strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+    .note-preview { margin-top: 4px; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .quality-dots { display: flex; gap: 4px; justify-content: flex-end; }
+    .quality-dot { width: 8px; height: 8px; border-radius: 999px; background: rgba(0,0,0,0.12); }
+    .block-body { display: flex; flex-direction: column; gap: 12px; padding: 0 12px 12px; }
+    .quality-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .quality-btn { min-height: 54px; flex-direction: column; gap: 2px; padding: 6px 4px; color: var(--muted); background: var(--card-bg); font-size: 12px; }
+    .quality-btn.active { color: var(--text); background: white; box-shadow: inset 0 0 0 2px currentColor; }
+
+    .tl-bar { height: 16px; border-radius: var(--radius); }
+    .tl-segment { flex: 1; min-width: 0; }
+
+    .summary-list { border: 1px solid var(--border); border-radius: var(--radius); background: white; overflow: hidden; }
+    .summary-row { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; padding: 11px 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
+    .summary-row:last-child { border-bottom: 0; }
+    .summary-row strong { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+    .editing-banner {
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+      gap: 8px; padding: 10px 12px; margin-bottom: 10px;
+      border: 1px solid rgba(24,95,165,0.28); border-radius: var(--radius);
+      color: #042C53; background: var(--blue-bg); font-size: 13px; font-weight: 800;
+    }
+    .done-card { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 22px 16px; text-align: center; }
+    .check-ring { width: 56px; height: 56px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; color: var(--green); background: var(--green-bg); font-size: 32px; }
+    .done-card h2 { margin: 0; font-size: 24px; }
+
+    .insight-card { width: 100%; padding: 12px; border: 1px solid rgba(29,158,117,0.26); border-radius: var(--radius); color: #085041; background: var(--green-bg); text-align: left; font-size: 14px; font-weight: 700; line-height: 1.45; }
+
+    .list-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px; }
+    .entry-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+    .entry-actions .danger-btn { min-height: 32px; padding: 0 10px; font-size: 12px; }
+    .list-row-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+    .list-row-title { overflow-wrap: anywhere; font-weight: 900; }
+    .list-row-meta { display: flex; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 800; }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .stat-card { padding: 14px; }
+    .stat-card span { display: block; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-card strong { display: block; margin-top: 6px; font-size: 28px; line-height: 1; letter-spacing: 0; }
+
+    .drop-zone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 132px; padding: 18px; border: 1px dashed var(--border-strong); border-radius: var(--radius); background: var(--card-bg); color: var(--muted); text-align: center; font-weight: 800; }
+    .drop-zone.dragging { border-color: var(--green); color: #085041; background: var(--green-bg); }
+
+    .toast { position: fixed; left: 50%; bottom: 82px; z-index: 50; transform: translateX(-50%) translateY(12px); max-width: min(92vw, 420px); padding: 10px 12px; border: 1px solid var(--border); border-radius: 999px; color: white; background: #111; font-size: 13px; font-weight: 800; opacity: 0; pointer-events: none; transition: opacity 160ms ease, transform 160ms ease; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ── Desktop / tablet layout ── */
+    @media (min-width: 768px) {
+      body { display: flex; align-items: center; justify-content: center; padding: 20px; }
+      .app-shell { max-width: 900px; min-height: calc(100vh - 40px); max-height: calc(100vh - 40px); flex-direction: row; border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+      .sidebar { width: 220px; flex: 0 0 220px; display: flex; flex-direction: column; gap: 18px; padding: 18px 14px; border-right: 1px solid var(--border); background: #F6F4EE; }
+      .main-panel { max-height: calc(100vh - 40px); }
+      .main-content { padding: 18px; }
+      .bottom-nav { display: none; }
+    }
+    @media (min-width: 1201px) {
+      body { padding: 24px; }
+      .app-shell { max-width: 1280px; min-height: calc(100vh - 48px); max-height: calc(100vh - 48px); }
+      .main-panel { max-height: calc(100vh - 48px); }
+      .ai-panel { width: 260px; flex: 0 0 260px; display: flex; flex-direction: column; gap: 12px; padding: 18px 14px; border-left: 1px solid var(--border); background: #F6F4EE; overflow-y: auto; }
+    }
+
+    .brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 900; }
+    .side-nav { display: flex; flex-direction: column; gap: 6px; }
+    .side-nav button, .lock-side { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-left: 2px solid transparent; border-radius: 0 var(--radius) var(--radius) 0; color: var(--muted); background: transparent; font-size: 13px; font-weight: 850; text-align: left; }
+    .side-nav button.active { border-left-color: var(--green); color: #085041; background: var(--green-bg); }
+    .side-nav i, .lock-side i { font-size: 19px; }
+    .streak-card { margin-top: auto; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: white; }
+    .streak-number { display: block; font-size: 34px; line-height: 1; font-weight: 950; }
+    .streak-text { color: var(--muted); font-size: 12px; font-weight: 850; }
+
+    .ai-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 900; }
+    .ai-card { padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: white; font-size: 13px; line-height: 1.42; }
+    .ai-card.green { border-color: rgba(29,158,117,0.24); color: #085041; background: var(--green-bg); }
+    .ai-card.amber { border-color: rgba(186,117,23,0.24); color: #412402; background: var(--amber-bg); }
+    .ai-card.blue  { border-color: rgba(24,95,165,0.24);  color: #042C53; background: var(--blue-bg); }
+    .ai-stat { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 800; }
+    .ai-stat:last-child { border-bottom: 0; }
+    .ai-stat span { color: var(--muted); }
+    .ai-stat strong { text-align: right; }
+
+    @media (max-width: 420px) {
+      .main-content { padding: 12px; }
+      .screen-header { padding: 14px 12px; }
+      .sleep-number { font-size: 36px; }
+      .quality-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .summary-row { grid-template-columns: 1fr; gap: 4px; }
+    }
+  </style>
+</head>
+<body class="locked">
+
+  <div id="sync-banner"></div>
+
+  <div id="lock-screen" class="lock-screen" aria-live="polite">
+    <div class="lock-card">
+      <div class="lock-brand"><span class="brand-dot"></span><span>Compound</span></div>
+      <h1 class="lock-title">Unlock Journal</h1>
+      <p class="lock-subtitle">Your data syncs to Firebase across all devices.</p>
+      <div id="pin-dots" class="pin-dots" aria-label="PIN entry">
+        <span class="pin-dot"></span><span class="pin-dot"></span>
+        <span class="pin-dot"></span><span class="pin-dot"></span>
+      </div>
+      <p id="pin-error" class="pin-error"></p>
+      <div class="keypad">
+        <button type="button" onclick="pinPress('1')">1</button>
+        <button type="button" onclick="pinPress('2')">2</button>
+        <button type="button" onclick="pinPress('3')">3</button>
+        <button type="button" onclick="pinPress('4')">4</button>
+        <button type="button" onclick="pinPress('5')">5</button>
+        <button type="button" onclick="pinPress('6')">6</button>
+        <button type="button" onclick="pinPress('7')">7</button>
+        <button type="button" onclick="pinPress('8')">8</button>
+        <button type="button" onclick="pinPress('9')">9</button>
+        <button type="button" class="key-blank" tabindex="-1" aria-hidden="true"></button>
+        <button type="button" onclick="pinPress('0')">0</button>
+        <button type="button" aria-label="Backspace" onclick="pinBackspace()"><span aria-hidden="true">⌫</span></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="app-shell" class="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-dot"></span><span>Compound</span></div>
+      <nav class="side-nav" aria-label="Primary">
+        <button type="button" data-view="entry"   class="active" onclick="switchView('entry')"><span aria-hidden="true">✏️</span><span>Today's entry</span></button>
+        <button type="button" data-view="history"            onclick="switchView('history')"><span aria-hidden="true">🕐</span><span>Past entries</span></button>
+        <button type="button" data-view="weekly"             onclick="switchView('weekly')"><span aria-hidden="true">📈</span><span>Weekly review</span></button>
+        <button type="button" data-view="export"             onclick="switchView('export')"><span aria-hidden="true">📤</span><span>Export/Import</span></button>
+      </nav>
+      <div class="streak-card">
+        <span id="sidebar-streak" class="streak-number">0</span>
+        <span class="streak-text">day streak &#128293;</span>
+      </div>
+      <button type="button" class="lock-side" onclick="lockApp()"><span aria-hidden="true">🔒</span><span>Lock</span></button>
+    </aside>
+
+    <section class="main-panel">
+      <header class="screen-header">
+        <div>
+          <div id="view-kicker" class="kicker">Today</div>
+          <h1 id="screen-title">Today's entry</h1>
+        </div>
+        <div id="save-indicator" class="save-indicator saved">Synced &#10003;</div>
+      </header>
+      <main id="main-content" class="main-content"></main>
+      <nav class="bottom-nav" aria-label="Mobile navigation">
+        <button type="button" data-view="entry"   class="active" onclick="switchView('entry')"><span aria-hidden="true">✏️</span><span>Today</span></button>
+        <button type="button" data-view="history"            onclick="switchView('history')"><span aria-hidden="true">🕐</span><span>History</span></button>
+        <button type="button" data-view="weekly"             onclick="switchView('weekly')"><span aria-hidden="true">📈</span><span>Weekly</span></button>
+        <button type="button" data-view="export"             onclick="switchView('export')"><span aria-hidden="true">🗄</span><span>Data</span></button>
+        <button type="button" onclick="lockApp()"><span aria-hidden="true">🔒</span><span>Lock</span></button>
+      </nav>
+    </section>
+
+    <aside class="ai-panel">
+      <div class="ai-title"><span aria-hidden="true">✦</span><span>AI insights</span></div>
+      <div id="ai-content"></div>
+    </aside>
+  </div>
+
+  <div id="sheet-root" class="sheet-root hidden"></div>
+  <div id="toast" class="toast"></div>
+  <input id="import-file" class="hidden" type="file" accept=".json,application/json" onchange="handleImportFiles(this.files); this.value='';">
+
+  <script>
+    // ── PIN (change this to your preferred code) ──────────────────────
+    const PIN = "0724";
+    // ─────────────────────────────────────────────────────────────────
+
+    const LABELS = {
+      work:        { name: "Work",        color: "#1D9E75", bg: "#E1F5EE", tc: "#085041", ibg: "#9FE1CB" },
+      study:       { name: "Study",       color: "#185FA5", bg: "#E6F1FB", tc: "#042C53", ibg: "#B5D4F4" },
+      admin:       { name: "Admin",       color: "#888780", bg: "#F1EFE8", tc: "#2C2C2A", ibg: "#D3D1C7" },
+      maintenance: { name: "Maintenance", color: "#BA7517", bg: "#FAEEDA", tc: "#412402", ibg: "#FAC775" },
+      health:      { name: "Health",      color: "#D4537E", bg: "#FBEAF0", tc: "#4B1528", ibg: "#F4C0D1" }
+    };
+    const LABEL_ORDER = ["work","study","admin","maintenance","health"];
+    const BLOCK_META = [
+      { id:"morning",   block:"Morning",   range:"Wake–10:00", icon:"🌅",  defaultLabel:"study" },
+      { id:"noon",      block:"Noon",      range:"10:00–14:00",icon:"☀️", defaultLabel:"work" },
+      { id:"afternoon", block:"Afternoon", range:"14:00–18:00",icon:"🌤",      defaultLabel:"admin" },
+      { id:"evening",   block:"Evening",   range:"18:00–Sleep",icon:"🌙",     defaultLabel:"health" }
+    ];
+    const QUALITIES = [
+      { key:"great", label:"Great", emoji:"&#128640;", color:"#1D9E75" },
+      { key:"good",  label:"Good",  emoji:"&#10024;",  color:"#185FA5" },
+      { key:"okay",  label:"Okay",  emoji:"&#9728;&#65039;", color:"#BA7517" },
+      { key:"rough", label:"Rough", emoji:"&#9889;",   color:"#E24B4A" }
+    ];
+    const MILESTONES = [7,14,21,30,60,90,180,365];
+
+    let entries = {};
+    let S;
+    let activeView = "entry";
+    let currentStep = 0;
+    let saveTimer = null;
+    let pinInput = "";
+    let addingTask = false;
+    let activeTaskIndex = null;
+    let draggedTaskIndex = null;
+    let touchDragIndex = null;
+    let touchDropIndex = null;
+    let touchDropBlockId = null;
+    let openBlockId = "morning";
+    let entryTagEdit = false;
+    let clearArmed = false;
+    let deleteEntryArmedDate = "";
+    let editingDate = null;  // null = today, otherwise = date string of historical entry being edited
+    let toastTimer = null;
+
+    // ── Fallback init: runs if Firebase module hasn't fired after 4s ────
+    document.addEventListener("DOMContentLoaded", function() {
+      setTimeout(function() {
+        if (typeof S === "undefined") {
+          entries = loadEntriesLocal();
+          S = loadTodayState();
+          updateSidebarStreak();
+          switchView("entry");
+          lockApp();
+        }
+      }, 2000);
+    });
+
+    // ── Keyboard support on lock screen ──────────────────────────────
+    document.addEventListener("keydown", function(e) {
+      const locked = !document.getElementById("lock-screen").classList.contains("hidden");
+      if (!locked) return;
+      if (/^[0-9]$/.test(e.key)) { e.preventDefault(); pinPress(e.key); }
+      if (e.key === "Backspace")  { e.preventDefault(); pinBackspace(); }
+    });
+
+    // ── Init (called by Firebase module once ready) ───────────────────
+    async function init() {
+      showSyncBanner("syncing", "Loading your journal from Firebase…");
+      const loaded = await window._fb.loadAll();
+      if (loaded === null) {
+        // Firebase not configured yet — fall back to localStorage
+        entries = loadEntriesLocal();
+        showSyncBanner("error", "⚠️ Firebase not configured. Using local storage — data won't sync across devices.");
+        setTimeout(hideSyncBanner, 6000);
+      } else {
+        entries = loaded;
+        hideSyncBanner();
+      }
+      S = loadTodayState();
+      updateSidebarStreak();
+      switchView("entry");
+      lockApp();
+    }
+
+    // ── Sync banner ───────────────────────────────────────────────────
+    function showSyncBanner(type, msg) {
+      const b = document.getElementById("sync-banner");
+      b.className = type; b.textContent = msg;
+    }
+    function hideSyncBanner() {
+      const b = document.getElementById("sync-banner");
+      b.className = ""; b.style.display = "none";
+    }
+
+    // ── LocalStorage fallback (used only when Firebase not configured) ─
+    function loadEntriesLocal() {
+      try {
+        const raw = localStorage.getItem("compound_journal_entries");
+        const parsed = raw ? JSON.parse(raw) : {};
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+      } catch(e) { return {}; }
+    }
+    function writeEntriesLocal() {
+      localStorage.setItem("compound_journal_entries", JSON.stringify(entries));
+    }
+
+    // ── Firebase write ─────────────────────────────────────────────────
+    async function writeEntry(date, data) {
+      if (!window._fb) { writeEntriesLocal(); return; }
+      const ok = await window._fb.save(date, data);
+      if (!ok) {
+        setSaveStatus("error");
+        showSyncBanner("error", "⚠️ Couldn't save to Firebase. Check your connection.");
+        setTimeout(hideSyncBanner, 5000);
+      }
+    }
+
+    async function removeEntry(date) {
+      if (!window._fb) { writeEntriesLocal(); return; }
+      await window._fb.remove(date);
+    }
+
+    async function clearAllFirebase(dates) {
+      if (!window._fb) { localStorage.removeItem("compound_journal_entries"); return; }
+      await window._fb.clearAll(dates);
+    }
+
+    // ── State helpers ─────────────────────────────────────────────────
+    function loadTodayState() {
+      const date = todayStr();
+      if (entries[date]) {
+        // Entry exists — load it, but merge in any newly unchecked tasks from yesterday
+        const state = normaliseState(JSON.parse(JSON.stringify(entries[date])));
+        const carried = carriedTasksFor(date);
+        // Add carried tasks that aren't already in today's list (match by text)
+        const existingTexts = new Set(state.tasks.map(t => t.text.toLowerCase()));
+        carried.forEach(ct => {
+          if (!existingTexts.has(ct.text.toLowerCase())) {
+            state.tasks.push(ct);
+          }
+        });
+        return state;
+      }
+      const base = blankState(date, true);
+      return normaliseState(base);
+    }
+
+    function blankState(date, carryTasks) {
+      return {
+        date, savedAt: "",
+        sleep:      { hours: 7.5, bedtime: "23:00", wake: "06:30", qualityScore: 50 },
+        alcohol:    { drank: false, soberDays: 1, lastDrink: "" },
+        reading:    { done: false, book: "", page: "", total: "", pct: 0 },
+        meditation: { done: false, minutes: "" },
+        calligraphy:{ done: false, minutes: "" },
+        vitals:     { energy: 3, mood: 3, stress: "low" },
+        exercise:   ["no-exercise"],
+        location:   ["home"],
+        tasks:      carryTasks ? carriedTasksFor(date) : [],
+        blocks:     defaultBlocks(),
+        narrative:  { entry: "", wins: "", blockers: "", intention: "" },
+        entryTags:  []
+      };
+    }
+
+    function defaultBlocks() {
+      return BLOCK_META.map(m => ({ id: m.id, block: m.block, note: "", tasksDone: "" }));
+    }
+
+    function carriedTasksFor(date) {
+      const dates = Object.keys(entries).filter(d => d < date).sort().reverse();
+      if (!dates.length) return [];
+      const source = entries[dates[0]];
+      if (!source || !Array.isArray(source.tasks)) return [];
+      return source.tasks
+        .filter(t => !t.done && t.text)
+        .map(t => ({ text: t.text, done: false, label: t.label || "", tags: Array.isArray(t.tags) ? t.tags.slice() : [], carried: true, block: "unscheduled" }));
+    }
+
+    function normaliseState(state) {
+      state.date     = state.date || todayStr();
+      state.savedAt  = state.savedAt || "";
+      state.sleep    = Object.assign({ hours: 7.5, bedtime: "23:00", wake: "06:30", qualityScore: 50 }, state.sleep || {});
+      state.sleep.hours = clamp(Number(state.sleep.hours) || 0, 0, 12);
+      state.sleep.qualityScore = clamp(Number(state.sleep.qualityScore) || 50, 0, 100);
+      state.alcohol  = Object.assign({ drank: false, soberDays: 1, lastDrink: "" }, state.alcohol || {});
+      state.alcohol.drank = !!state.alcohol.drank;
+      state.reading  = Object.assign({ done: false, book: "", page: "", total: "", pct: 0 }, state.reading || {});
+      state.reading.done = !!state.reading.done;
+      state.reading.pct  = readingPctFor(state);
+      state.meditation  = Object.assign({ done: false, minutes: "" }, state.meditation || {});
+      state.calligraphy = Object.assign({ done: false, minutes: "" }, state.calligraphy || {});
+      state.vitals   = Object.assign({ energy: 3, mood: 3, stress: "low" }, state.vitals || {});
+      state.exercise = Array.isArray(state.exercise) ? state.exercise : ["no-exercise"];
+      state.location = Array.isArray(state.location) ? state.location : ["home"];
+      state.tasks    = Array.isArray(state.tasks) ? state.tasks.map(normaliseTask) : [];
+      state.blocks   = normaliseBlocks(state.blocks);
+      state.narrative = Object.assign({ entry: "", wins: "", blockers: "", intention: "" }, state.narrative || {});
+      state.entryTags = Array.isArray(state.entryTags) ? state.entryTags.map(normalizeTag).filter(Boolean) : [];
+      deriveAlcoholFor(state);
+      return state;
+    }
+
+    function normaliseTask(t) {
+      return { text: String(t.text || ""), done: !!t.done, label: t.label && LABELS[t.label] ? t.label : "", tags: Array.isArray(t.tags) ? t.tags.map(normalizeTag).filter(Boolean) : [], carried: !!t.carried, block: t.block || "unscheduled" };
+    }
+
+    function normaliseBlocks(blocks) {
+      const byId = {};
+      if (Array.isArray(blocks)) blocks.forEach(b => { if (b && b.id) byId[b.id] = b; });
+      return BLOCK_META.map(m => {
+        const s = byId[m.id] || {};
+        return { id: m.id, block: m.block, note: s.note || "", tasksDone: s.tasksDone || "" };
+      });
+    }
+
+    function deepMerge(base, saved) {
+      if (Array.isArray(base)) return Array.isArray(saved) ? saved : base;
+      if (!base || typeof base !== "object") return saved === undefined ? base : saved;
+      const out = Object.assign({}, base);
+      Object.keys(saved || {}).forEach(k => { out[k] = deepMerge(base[k], saved[k]); });
+      return out;
+    }
+
+    // ── PIN ───────────────────────────────────────────────────────────
+    function pinPress(digit) {
+      if (pinInput.length >= 4) return;
+      pinInput += digit;
+      updatePinDots(false);
+      if (pinInput.length === 4) { pinInput === PIN ? unlockApp() : wrongPin(); }
+    }
+    function pinBackspace() {
+      if (!pinInput.length) return;
+      pinInput = pinInput.slice(0, -1);
+      updatePinDots(false);
+    }
+    function updatePinDots(error) {
+      const wrap = document.getElementById("pin-dots");
+      wrap.classList.toggle("error", !!error);
+      wrap.querySelectorAll(".pin-dot").forEach((dot, i) => dot.classList.toggle("filled", i < pinInput.length));
+    }
+    function wrongPin() {
+      const wrap = document.getElementById("pin-dots");
+      updatePinDots(true);
+      wrap.classList.add("shake");
+      document.getElementById("pin-error").textContent = "Wrong PIN. Try again.";
+      setTimeout(() => { pinInput = ""; updatePinDots(false); wrap.classList.remove("shake"); document.getElementById("pin-error").textContent = ""; }, 900);
+    }
+    function unlockApp() {
+      pinInput = ""; updatePinDots(false);
+      document.getElementById("pin-error").textContent = "";
+      document.getElementById("lock-screen").classList.add("hidden");
+      document.getElementById("app-shell").hidden = false;
+      document.body.classList.remove("locked");
+    }
+    function lockApp() {
+      pinInput = "";
+      document.getElementById("app-shell").hidden = true;
+      document.getElementById("lock-screen").classList.remove("hidden");
+      document.body.classList.add("locked");
+      updatePinDots(false);
+    }
+
+    // ── View switching ────────────────────────────────────────────────
+    function switchView(name) {
+      if (activeView === "entry" && currentStep === 2) saveOpenBlockNotes();
+      if (activeView !== name) deleteEntryArmedDate = "";
+      // If leaving an edited historical entry, restore today
+      if (activeView === "entry" && editingDate && name !== "entry") {
+        saveEntryNow();
+        editingDate = null;
+        S = loadTodayState();
+      }
+      activeView = name;
+      document.querySelectorAll("[data-view]").forEach(b => b.classList.toggle("active", b.dataset.view === name));
+      if (name === "entry")   {
+        if (editingDate) {
+          setHeader("Editing", longDate(editingDate));
+        } else {
+          setHeader("Today", "Today's entry");
+        }
+        goStep(currentStep || 0);
+      }
+      if (name === "history") { setHeader("History", "Past entries");  renderHistory(); }
+      if (name === "weekly")  { setHeader("Review",  "Weekly review"); renderWeekly(); }
+      if (name === "export")  { setHeader("Data",    "Export / Import"); renderExport(); }
+    }
+
+    function editEntry(date) {
+      if (!entries[date]) return;
+      editingDate = date;
+      S = normaliseState(JSON.parse(JSON.stringify(entries[date])));
+      currentStep = 0;
+      activeView = "history";  // force switchView to treat it as a new switch
+      switchView("entry");
+    }
+
+    function stopEditingEntry() {
+      saveEntryNow();
+      editingDate = null;
+      S = loadTodayState();
+      switchView("history");
+    }
+    function setHeader(kicker, title) {
+      document.getElementById("view-kicker").textContent  = kicker;
+      document.getElementById("screen-title").textContent = title;
+    }
+
+    // ── Save ──────────────────────────────────────────────────────────
+    function setSaveStatus(mode) {
+      const el = document.getElementById("save-indicator");
+      if (!el) return;
+      el.className = "save-indicator " + mode;
+      el.innerHTML = mode === "saving" ? "Syncing…" : mode === "error" ? "Sync error ✗" : "Synced &#10003;";
+    }
+    function markDirty() {
+      setSaveStatus("saving");
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(saveEntryNow, 1200);
+    }
+    async function saveEntryNow() {
+      if (!S) return;
+      clearTimeout(saveTimer);
+      saveOpenBlockNotes();
+      deriveAlcohol();
+      S.reading.pct = readingPct();
+      S.savedAt = new Date().toISOString();
+      entries[S.date] = JSON.parse(JSON.stringify(S));
+      await writeEntry(S.date, entries[S.date]);
+      setSaveStatus("saved");
+      updateSidebarStreak();
+      renderAI();
+    }
+
+    // ── Steps ─────────────────────────────────────────────────────────
+    function goStep(step) {
+      if (!S) return;
+      if (currentStep === 2) saveOpenBlockNotes();
+      currentStep = clamp(step, 0, 3);   // 4 steps: sleep, vitals, tasks+blocks, narrative
+      entryTagEdit = false;
+      renderStep();
+      renderAI();
+      const main = document.getElementById("main-content");
+      if (main) main.scrollTop = 0;
+    }
+    function renderStep() {
+      if (!S) return;
+      if (currentStep === 0) renderStep0();
+      if (currentStep === 1) renderStep1();
+      if (currentStep === 2) renderStep2();
+      if (currentStep === 3) renderStep4();
+    }
+    function stepShell(name, body, navId) {
+      return ['<div class="entry-step">', stepHeader(name), body,
+        '<div class="step-nav">',
+          '<button type="button" class="ghost-btn" id="bbk'+navId+'"><span aria-hidden="true">←</span><span>Back</span></button>',
+          '<button type="button" class="primary-btn" id="bnx'+navId+'"><span>Continue</span><span aria-hidden="true">→</span></button>',
+        '</div></div>'].join("");
+    }
+    function stepHeader(name) {
+      let pips = "";
+      for (let i = 0; i < 4; i++) pips += '<span class="pip '+(i <= currentStep ? "on" : "")+'"></span>';
+      const editBanner = editingDate
+        ? '<div class="editing-banner">✏️ Editing entry for <strong>'+longDate(editingDate)+'</strong> &nbsp;<button type="button" class="small-btn ghost-btn" onclick="stopEditingEntry()">✕ Done editing</button></div>'
+        : '';
+      return editBanner + '<div class="step-top"><div class="pip-bar">'+pips+'</div><div class="step-label">Step '+(currentStep+1)+' of 4 &mdash; '+esc(name)+'</div></div>';
+    }
+    function bindStepNav(index) {
+      const back = document.getElementById("bbk"+index);
+      const next = document.getElementById("bnx"+index);
+      if (back) { back.disabled = index === 0; back.onclick = () => { saveEntryNow(); goStep(index-1); }; }
+      if (next) { next.onclick = () => { saveEntryNow(); goStep(index+1); }; }
+    }
+
+    // ── Step 0: Sleep & Habits (no Diet) ─────────────────────────────
+    function renderStep0() {
+      deriveAlcohol();
+      const sleepQ = sleepQuality(S.sleep.hours);
+      const body = [
+        '<section class="card">',
+          '<div class="section-title"><h2>Sleep</h2><span id="sleep-badge" class="badge '+sleepQ.tone+'">'+sleepQ.label+'</span></div>',
+          '<div class="sleep-display"><div id="sleep-display" class="sleep-number">'+formatHours(S.sleep.hours)+'</div></div>',
+          '<input type="range" min="0" max="12" step="0.0167" value="'+Number(S.sleep.hours).toFixed(4)+'" oninput="setSleepHours(this.value)">',
+          '<div class="grid2" style="margin-top:12px">',
+            '<div class="field"><label for="bedtime">Bedtime (24h e.g. 23:00)</label><input id="bedtime" type="text" inputmode="numeric" maxlength="5" placeholder="23:00" value="'+escAttr(S.sleep.bedtime)+'" oninput="setSleepTime(\'bedtime\', this.value)"></div>',
+            '<div class="field"><label for="wake">Wake (24h e.g. 06:30)</label><input id="wake" type="text" inputmode="numeric" maxlength="5" placeholder="06:30" value="'+escAttr(S.sleep.wake)+'" oninput="setSleepTime(\'wake\', this.value)"></div>',
+          '</div>',
+          '<div class="field" style="margin-top:12px">',
+            '<label>Sleep quality score (0\u201310)</label>',
+            '<div class="row" style="gap:12px;align-items:center">',
+              '<input type="range" min="0" max="100" step="1" value="'+(S.sleep.qualityScore||50)+'" oninput="setSleepQualityScore(this.value)" style="flex:1">',
+              '<span id="sq-display" style="font-size:22px;font-weight:900;min-width:36px;text-align:right">'+(S.sleep.qualityScore||50)+'</span>',
+            '</div>',
+          '</div>',
+        '</section>',
+        '<section class="card">',
+          '<h2>Alcohol</h2>',
+          '<div class="grid2">',
+            '<button type="button" class="chip full '+(!S.alcohol.drank?"active":"")+'" onclick="setAlcohol(false)">No, sober</button>',
+            '<button type="button" class="chip red full '+(S.alcohol.drank?"active":"")+'" onclick="setAlcohol(true)">Yes, I drank</button>',
+          '</div>',
+          alcoholCardHTML(),
+        '</section>',
+        '<section class="card">',
+          '<h2>Daily reading</h2>',
+          '<div class="grid2">',
+            '<button type="button" class="chip full '+(!S.reading.done?"active":"")+'" onclick="setReading(false)">Missed</button>',
+            '<button type="button" class="chip full '+(S.reading.done?"active":"")+'" onclick="setReading(true)">Yes</button>',
+          '</div>',
+          readingDetailsHTML(),
+        '</section>',
+        habitCard("meditation", "Meditation"),
+        habitCard("calligraphy", "Calligraphy")
+      ].join("");
+      document.getElementById("main-content").innerHTML = stepShell("Sleep & Habits", body, 0);
+      bindStepNav(0);
+    }
+
+    function alcoholCardHTML() {
+      const previous = previousSoberDays(S.date);
+      if (S.alcohol.drank) {
+        return ['<div class="alcohol-card" style="margin-top:10px">',
+          '<div class="badge red">Streak reset</div>',
+          '<div class="big-count"><strong>0</strong><span>days sober</span></div>',
+          '<div class="tiny">Previous streak: '+previous+' day'+plural(previous)+'. Last drink: today.</div>',
+        '</div>'].join("");
+      }
+      const days = S.alcohol.soberDays, next = nextMilestone(days);
+      return ['<div class="alcohol-card" style="margin-top:10px">',
+        '<div class="row between"><span class="badge green">Streak active</span><span class="badge blue">Next: '+next+' days</span></div>',
+        '<div class="big-count"><strong>'+days+'</strong><span>days sober</span></div>',
+        '<div class="tiny">Last drink: '+(S.alcohol.lastDrink||"No logged drinks")+'. Yesterday was '+previous+' day'+plural(previous)+'.</div>',
+      '</div>'].join("");
+    }
+
+    function readingDetailsHTML() {
+      if (!S.reading.done) return "";
+      const pct = readingPct();
+      return ['<div class="stack" style="margin-top:12px">',
+        '<div class="field"><label>Book</label><input type="text" value="'+escAttr(S.reading.book)+'" placeholder="Book name" oninput="updateReadingField(\'book\', this.value)"></div>',
+        '<div class="row">',
+          '<input class="narrow" type="number" min="0" value="'+escAttr(S.reading.page)+'" placeholder="Page" oninput="updateReadingField(\'page\', this.value)">',
+          '<span class="tiny">/</span>',
+          '<input class="narrow" type="number" min="0" value="'+escAttr(S.reading.total)+'" placeholder="Total" oninput="updateReadingField(\'total\', this.value)">',
+          '<div class="progress-line">',
+            '<div class="progress-track"><div id="reading-progress" class="progress-fill" style="width:'+pct+'%"></div></div>',
+            '<strong id="reading-pct" class="tiny">'+pct+'%</strong>',
+          '</div>',
+        '</div>',
+      '</div>'].join("");
+    }
+
+    function habitCard(key, label) {
+      const state = S[key];
+      return ['<section class="card">',
+        '<h2>'+label+'</h2>',
+        '<div class="grid2">',
+          '<button type="button" class="chip full '+(!state.done?"active":"")+'" onclick="setHabit(\''+key+'\', false)">No</button>',
+          '<button type="button" class="chip full '+(state.done?"active":"")+'" onclick="setHabit(\''+key+'\', true)">Yes</button>',
+        '</div>',
+        state.done ? '<div class="field" style="margin-top:12px"><label>Minutes</label><input class="narrow" type="number" min="0" value="'+escAttr(state.minutes)+'" oninput="setMinutes(\''+key+'\', this.value)"></div>' : '',
+      '</section>'].join("");
+    }
+
+    function setSleepHours(v) { S.sleep.hours = clamp(Number(v)||0,0,12); updateSleepDisplay(); markDirty(); }
+    function setSleepQualityScore(v) { S.sleep.qualityScore = clamp(Number(v)||0,0,100); var el=document.getElementById('sq-display'); if(el)el.textContent=S.sleep.qualityScore; markDirty(); }
+    function setSleepTime(key, v) {
+      // Auto-insert colon: turn "2300" into "23:00"
+      var clean = v.replace(/[^0-9]/g, "");
+      if (clean.length >= 3) clean = clean.slice(0,2) + ":" + clean.slice(2,4);
+      var valid = /^([01]\d|2[0-3]):[0-5]\d$/.test(clean);
+      // Update the input display to formatted value
+      var el = document.getElementById(key);
+      if (el && clean !== v) { el.value = clean; }
+      S.sleep[key] = clean;
+      if (valid && S.sleep.bedtime && S.sleep.wake &&
+          /^([01]\d|2[0-3]):[0-5]\d$/.test(S.sleep.bedtime) &&
+          /^([01]\d|2[0-3]):[0-5]\d$/.test(S.sleep.wake)) {
+        S.sleep.hours = calcSleepHours(S.sleep.bedtime, S.sleep.wake);
+        const slider = document.querySelector('input[type="range"]');
+        if (slider) slider.value = Number(S.sleep.hours).toFixed(4);
+        updateSleepDisplay();
+      }
+      markDirty();
+    }
+    function updateSleepDisplay() {
+      const display = document.getElementById("sleep-display");
+      const badge   = document.getElementById("sleep-badge");
+      const q = sleepQuality(S.sleep.hours);
+      if (display) display.textContent = formatHours(S.sleep.hours);
+      if (badge) { badge.className = "badge "+q.tone; badge.textContent = q.label; }
+      renderAI();
+    }
+    function setAlcohol(drank) { S.alcohol.drank = drank; deriveAlcohol(); markDirty(); renderStep0(); }
+    function setReading(done) { S.reading.done = done; if (!done) S.reading.pct = 0; markDirty(); renderStep0(); }
+    function updateReadingField(key, v) {
+      S.reading[key] = v; S.reading.pct = readingPct();
+      const pct = S.reading.pct;
+      const bar = document.getElementById("reading-progress"), label = document.getElementById("reading-pct");
+      if (bar) bar.style.width = pct+"%"; if (label) label.textContent = pct+"%"; markDirty();
+    }
+    function setHabit(key, done) { S[key].done = done; if (!done) S[key].minutes = ""; markDirty(); renderStep0(); }
+    function setMinutes(key, v) { S[key].minutes = v; markDirty(); }
+
+    // ── Step 1: Vitals ────────────────────────────────────────────────
+    function renderStep1() {
+      const body = [
+        '<section class="card"><h2>Energy</h2>'+ratingRow("energy", S.vitals.energy)+'</section>',
+        '<section class="card"><h2>Mood</h2>'  +ratingRow("mood",   S.vitals.mood)  +'</section>',
+        '<section class="card"><h2>Stress</h2><div class="grid2">'+
+          stressChip("low","Low","")+stressChip("medium","Medium","amber")+
+          stressChip("high","High","red")+stressChip("very-high","Very high","red")+
+        '</div></section>',
+        '<section class="card"><h2>Exercise</h2><div class="grid2">'+
+          exerciseChip("no-exercise","No exercise")+exerciseChip("jogging","Jogging")+
+          exerciseChip("swimming","Swimming")+exerciseChip("strength","Strength")+exerciseChip("other","Other")+
+        '</div></section>',
+        '<section class="card"><h2>Location</h2><div class="grid2">'+
+          locationChip("home","Home")+locationChip("field","On field")+locationChip("travel","Travel")+
+        '</div></section>'
+      ].join("");
+      document.getElementById("main-content").innerHTML = stepShell("Daily Vitals", body, 1);
+      bindStepNav(1);
+    }
+    function ratingRow(key, value) {
+      let html = '<div class="rating-row">';
+      for (let i = 1; i <= 5; i++) html += '<button type="button" class="rating-btn '+(Number(value)===i?"active":"")+'" onclick="setRating(\''+key+'\','+i+')">'+i+'</button>';
+      return html+'</div>';
+    }
+    function stressChip(key, label, tone) { return '<button type="button" class="chip full '+tone+' '+(S.vitals.stress===key?"active":"")+'" onclick="setStress(\''+key+'\')">'+label+'</button>'; }
+    function exerciseChip(key, label) { return '<button type="button" class="chip full '+(S.exercise.includes(key)?"active":"")+'" onclick="toggleExercise(\''+key+'\')">'+label+'</button>'; }
+    function locationChip(key, label) { return '<button type="button" class="chip full '+(S.location.includes(key)?"active":"")+'" onclick="toggleLocation(\''+key+'\')">'+label+'</button>'; }
+    function setRating(key, v) { S.vitals[key] = v; markDirty(); renderStep1(); }
+    function setStress(v) { S.vitals.stress = v; markDirty(); renderStep1(); }
+    function toggleExercise(v) {
+      if (v==="no-exercise") { S.exercise = ["no-exercise"]; }
+      else {
+        S.exercise = S.exercise.filter(i => i !== "no-exercise");
+        S.exercise.includes(v) ? S.exercise = S.exercise.filter(i => i !== v) : S.exercise.push(v);
+        if (!S.exercise.length) S.exercise = ["no-exercise"];
+      }
+      markDirty(); renderStep1();
+    }
+    function toggleLocation(v) { S.location.includes(v) ? S.location = S.location.filter(i => i !== v) : S.location.push(v); markDirty(); renderStep1(); }
+
+    // ── Step 2: Tasks + Time Blocks (merged) ────────────────────────────
+    const BLOCK_DEFS = [
+      { id:"unscheduled", label:"Unscheduled",  range:"",             color:"#888780", bg:"#F1EFE8", icon:"☰" },
+      { id:"morning",     label:"Morning",       range:"Wake –10:00",  color:"#1D9E75", bg:"#E1F5EE", icon:"🌅" },
+      { id:"noon",        label:"Noon",           range:"10:00–14:00", color:"#185FA5", bg:"#E6F1FB", icon:"☀️" },
+      { id:"afternoon",   label:"Afternoon",      range:"14:00–18:00", color:"#BA7517", bg:"#FAEEDA", icon:"🌤" },
+      { id:"evening",     label:"Evening",        range:"18:00–Sleep", color:"#D4537E", bg:"#FBEAF0", icon:"🌙" }
+    ];
+
+    function renderStep2() {
+      if (!S) return;
+      var totalTasks = S.tasks.length;
+      var doneTasks  = S.tasks.filter(function(t){return t.done;}).length;
+      var html2 = '<div class="entry-step">';
+      html2 += stepHeader("Tasks & Schedule");
+      html2 += '<div class="unified-layout">';
+      // Add task button
+      html2 += addTaskHTML();
+      // Each block section
+      BLOCK_DEFS.forEach(function(bd) {
+        var tasks = S.tasks.filter(function(t){ return (t.block||"unscheduled") === bd.id; });
+        var blockNote = "";
+        if (bd.id !== "unscheduled") {
+          var bData = S.blocks.find(function(b){return b.id === bd.id;});
+          blockNote = bData ? bData.note : "";
+        }
+        html2 += '<div class="block-section" id="bs-'+bd.id+'"';
+        html2 += ' ondragover="blockDragOver(event,\''+bd.id+'\')" ondrop="blockDrop(event,\''+bd.id+'\')">';
+        html2 += '<div class="block-section-head" style="border-left:3px solid '+bd.color+'">';
+        html2 += '<span style="color:'+bd.color+';font-size:18px" class="block-sec-icon">'+bd.icon+'</span>';
+        html2 += '<div style="flex:1;min-width:0">';
+        html2 += '<strong style="font-size:13px">'+bd.label+(bd.range ? ' <span style="color:var(--faint);font-weight:600;font-size:11px">('+bd.range+')</span>' : '')+'</strong>';
+        if (tasks.length) html2 += '<span style="margin-left:8px;font-size:11px;color:var(--faint)">'+tasks.filter(function(t){return t.done;}).length+'/'+tasks.length+' done</span>';
+        html2 += '</div></div>';
+        // Tasks in this block
+        html2 += '<div class="block-task-list" id="btl-'+bd.id+'">';
+        tasks.forEach(function(task) {
+          var gi = S.tasks.indexOf(task);
+          html2 += blockTaskRowHTML(task, gi, bd.color);
+        });
+        if (!tasks.length) {
+          html2 += '<div class="block-empty-drop">Drop tasks here</div>';
+        }
+        html2 += '</div>';
+        // Note field for real blocks (not unscheduled)
+        if (bd.id !== "unscheduled") {
+          html2 += '<div style="padding:8px 10px 10px">';
+          html2 += '<textarea class="block-note-ta" data-block="'+bd.id+'" rows="2" placeholder="Block notes..." oninput="updateBlockNote(\''+bd.id+'\',this.value)" style="font-size:12px;resize:none">'+esc(blockNote)+'</textarea>';
+          html2 += '</div>';
+        }
+        html2 += '</div>';
+      });
+      html2 += '</div>';
+      html2 += '<div class="step-nav">';
+      html2 += '<button type="button" class="ghost-btn" id="bbk2"><span aria-hidden="true">←</span><span>Back</span></button>';
+      html2 += '<button type="button" class="primary-btn" id="bnx2"><span>Continue</span><span aria-hidden="true">→</span></button>';
+      html2 += '</div></div>';
+      document.getElementById("main-content").innerHTML = html2;
+      document.getElementById("bbk2").onclick = function(){ saveOpenBlockNotes(); saveEntryNow(); goStep(1); };
+      document.getElementById("bnx2").onclick = function(){ saveOpenBlockNotes(); saveEntryNow(); goStep(3); };
+      if (addingTask) {
+        setTimeout(function(){ var inp=document.getElementById("new-task-input"); if(inp)inp.focus(); }, 0);
+      }
+    }
+
+    function blockTaskRowHTML(task, index, accentColor) {
+      var numBadge = (index+1);
+      var label = labelBadgeHTML(task.label, 'onclick="openLabelPicker('+index+')"');
+      return ['<div class="task-row block-task-row" data-index="'+index+'" draggable="true"',
+        ' ondragstart="dragTaskStart(event,'+index+')" ondragover="dragTaskOver(event)" ondrop="dropTaskInBlock(event,'+index+')" ondragend="dragTaskEnd(event)">',
+        '<span class="task-order-num" style="color:'+accentColor+'">'+numBadge+'</span>',
+        '<button type="button" class="check-dot '+(task.done?"done":"")+'" onclick="toggleTask('+index+')"><span aria-hidden="true">✓</span></button>',
+        '<div class="task-main">',
+          '<span class="task-text '+(task.done?"done":"")+'">'+esc(task.text)+'</span>',
+          '<div class="task-meta">'+label+(task.carried?'<span class="carried-badge">Carried</span>':'')+'</div>',
+        '</div>',
+        '<span class="grip" style="cursor:grab;color:var(--faint);padding:0 4px"><span aria-hidden="true" style="letter-spacing:-2px">⠿</span></span>',
+        '<button type="button" class="small-btn danger-btn" onclick="removeTask('+index+')"><span aria-hidden="true">✕</span></button>',
+      '</div>'].join("");
+    }
+
+    function addTaskHTML() {
+      if (!addingTask) return '<button type="button" class="add-task" onclick="startAddTask()" style="margin-bottom:10px"><span aria-hidden="true">+</span><span>Add task</span></button>';
+      return ['<div class="inline-add" style="margin-bottom:10px">',
+        '<input id="new-task-input" type="text" placeholder="Task description" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" onkeydown="newTaskKey(event)">',
+        '<button type="button" class="ghost-btn" onclick="cancelAddTask()" aria-label="Cancel">&#10005;</button>',
+        '<button type="button" class="primary-btn" onclick="commitAddTask()">Add</button>',
+      '</div>'].join("");
+    }
+
+    function labelBadgeHTML(label, extra) {
+      if (!label || !LABELS[label]) return '<span class="label-badge" '+extra+'>No label</span>';
+      var l = LABELS[label];
+      return '<span class="label-badge" style="border-color:'+l.color+'; color:'+l.tc+'; background:'+l.bg+'" '+extra+'>'+l.name+'</span>';
+    }
+    function startAddTask()  { addingTask = true;  renderStep2(); }
+    function cancelAddTask() { addingTask = false; renderStep2(); }
+    function commitAddTask() {
+      var inp  = document.getElementById("new-task-input");
+      var text = (inp ? inp.value : "").trim();
+      if (!text) { showToast("Enter a task first."); if(inp)inp.focus(); return; }
+      S.tasks.push({ text:text, done:false, label:"", tags:[], carried:false, block:"unscheduled" });
+      addingTask = false; markDirty(); renderStep2();
+    }
+    function newTaskKey(e) {
+      if (e.key==="Enter")  { e.preventDefault(); commitAddTask(); }
+      if (e.key==="Escape") { e.preventDefault(); cancelAddTask(); }
+    }
+    function toggleTask(i)  { if(!S.tasks[i]) return; S.tasks[i].done = !S.tasks[i].done; markDirty(); renderStep2(); }
+    function removeTask(i)  { S.tasks.splice(i,1); markDirty(); renderStep2(); }
+
+    // Drag tasks within a block or between blocks
+    function dragTaskStart(e, i) {
+      draggedTaskIndex = i;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", String(i));
+      var row = e.currentTarget.closest(".task-row");
+      if (row) row.classList.add("dragging");
+    }
+    function dragTaskOver(e) { e.preventDefault(); e.dataTransfer.dropEffect="move"; }
+    function dragTaskEnd(e)  { var row=e.currentTarget.closest(".task-row"); if(row)row.classList.remove("dragging"); draggedTaskIndex=null; }
+
+    // Drop ON another task row (reorder within same block)
+    function dropTaskInBlock(e, targetIndex) {
+      e.preventDefault(); e.stopPropagation();
+      if (draggedTaskIndex===null || draggedTaskIndex===targetIndex) return;
+      // Keep same block — just reorder
+      var movedBlock = S.tasks[draggedTaskIndex].block;
+      var targetBlock = S.tasks[targetIndex].block;
+      if (movedBlock === targetBlock) {
+        moveTask(draggedTaskIndex, targetIndex);
+      } else {
+        // Move to target block and reorder
+        S.tasks[draggedTaskIndex].block = targetBlock;
+        moveTask(draggedTaskIndex, targetIndex);
+      }
+      draggedTaskIndex = null;
+      markDirty(); renderStep2();
+    }
+
+    // Drop ON a block section (assign to that block)
+    function blockDragOver(e, blockId) { e.preventDefault(); e.dataTransfer.dropEffect="move"; var el=document.getElementById("bs-"+blockId); if(el)el.classList.add("block-drop-active"); }
+    function blockDrop(e, blockId) {
+      e.preventDefault();
+      var el=document.getElementById("bs-"+blockId); if(el)el.classList.remove("block-drop-active");
+      // Check if dropped on a task row (handled by dropTaskInBlock) — only act if dropped on the section itself
+      if (e.target.closest(".task-row")) return;
+      if (draggedTaskIndex===null) return;
+      S.tasks[draggedTaskIndex].block = blockId;
+      draggedTaskIndex = null;
+      markDirty(); renderStep2();
+    }
+
+    function moveTask(from, to) { var item=S.tasks.splice(from,1)[0]; S.tasks.splice(to,0,item); }
+
+    // Label picker (sheet)
+    function openLabelPicker(i) {
+      activeTaskIndex = i;
+      var task = S.tasks[i];
+      var chips = LABEL_ORDER.map(function(key) {
+        var l = LABELS[key];
+        return '<button type="button" class="label-chip" style="border-color:'+l.color+'; color:'+l.tc+'; background:'+(task.label===key?l.bg:'white')+'" data-action onclick="setTaskLabel('+i+',\''+key+'\')">'+(l.name)+'</button>';
+      }).join("");
+      document.getElementById("sheet-root").innerHTML = ['<div class="sheet-panel">',
+        '<div class="sheet-head"><h3>Label this task</h3><button type="button" class="ghost-btn" onclick="closeSheet()"><span aria-hidden="true">✕</span></button></div>',
+        '<div class="chip-row">'+chips+'</div>',
+        '<div class="sheet-section"><button type="button" class="ghost-btn" style="width:100%" onclick="setTaskLabel('+i+',\'\')">Clear label</button></div>',
+      '</div>'].join("");
+      document.getElementById("sheet-root").classList.remove("hidden");
+    }
+    function setTaskLabel(i, label) { if(S.tasks[i]) S.tasks[i].label=label; markDirty(); closeSheet(); renderStep2(); }
+    function closeSheet() {
+      var root=document.getElementById("sheet-root");
+      root.classList.add("hidden"); root.innerHTML=""; activeTaskIndex=null;
+    }
+
+    // Touch drag (mobile)
+    function touchTaskStart(e,i) { touchDragIndex=i; touchDropIndex=i; var row=e.currentTarget.closest(".task-row"); if(row)row.classList.add("dragging"); }
+    function touchTaskMove(e) {
+      var touch=e.touches[0];
+      var el=document.elementFromPoint(touch.clientX,touch.clientY);
+      var row=el?el.closest(".task-row"):null;
+      var bs=el?el.closest(".block-section"):null;
+      if(row&&row.dataset.index!==undefined) touchDropIndex=Number(row.dataset.index);
+      if(bs&&bs.id) {
+        var bid=bs.id.replace("bs-","");
+        // highlight
+        document.querySelectorAll(".block-section").forEach(function(s){s.classList.remove("block-drop-active");});
+        bs.classList.add("block-drop-active");
+        touchDropBlockId=bid;
+      }
+    }
+    function touchTaskEnd(e) {
+      var row=e.currentTarget.closest(".task-row"); if(row)row.classList.remove("dragging");
+      document.querySelectorAll(".block-section").forEach(function(s){s.classList.remove("block-drop-active");});
+      if(touchDragIndex!==null) {
+        if(touchDropBlockId && S.tasks[touchDragIndex]) {
+          S.tasks[touchDragIndex].block=touchDropBlockId;
+        }
+        if(touchDropIndex!==null && touchDropIndex!==touchDragIndex) {
+          moveTask(touchDragIndex,touchDropIndex);
+        }
+        markDirty();
+      }
+      touchDragIndex=null; touchDropIndex=null; touchDropBlockId=null;
+      renderStep2();
+    }
+
+    // Block notes
+    function updateBlockNote(id, v) {
+      var b=S.blocks.find(function(x){return x.id===id;});
+      if(b) b.note=v;
+      markDirty();
+    }
+    function saveOpenBlockNotes() {
+      document.querySelectorAll(".block-note-ta").forEach(function(ta) {
+        var id=ta.dataset.block;
+        var b=S&&S.blocks?S.blocks.find(function(x){return x.id===id;}):null;
+        if(b) b.note=ta.value;
+      });
+    }
+
+    // Legacy stubs (referenced elsewhere)
+    function breakdownHTML() { return ""; }
+    function ungroupedLabels() { return false; }
+    function glanceBarHTML() { return ""; }
+    function openTagEditor(i) {}
+    function renderTagEditor() {}
+    function tagEditorAction() {}
+    function addTaskTagFromInput() { return false; }
+    function refreshTaskTagUI() {}
+    function tagInputKey(e) {}
+    function renderS3body() {}
+    function saveOpenBlockNote() { saveOpenBlockNotes(); }
+    function blockBodyHTML(b) { return ""; }
+    function toggleBlock(id) {}
+    function updateBlockTasks(id,v) {}
+
+    // ── Step 4: Narrative + Tags + Summary (merged) ───────────────────
+    function renderStep4() {
+      document.getElementById("main-content").innerHTML = ['<div class="entry-step">',stepHeader("Narrative & Tags"),
+        '<div id="s4body"></div>',
+        '<div class="step-nav">',
+          '<button type="button" class="ghost-btn" id="bbk4"><span aria-hidden="true">←</span><span>Back</span></button>',
+          '<button type="button" class="primary-btn" id="bnx4"><span>Save entry</span><span aria-hidden="true">✓</span></button>',
+        '</div></div>'].join("");
+      document.getElementById("bbk4").onclick = () => { saveEntryNow(); goStep(2); };
+      document.getElementById("bnx4").onclick = () => {
+        if (editingDate) { stopEditingEntry(); } else { saveEntryNow(); renderDone(); }
+      };
+      document.getElementById("bnx4").innerHTML = editingDate
+        ? '<span>Save changes</span><span aria-hidden="true">✓</span>'
+        : '<span>Save entry</span><span aria-hidden="true">✓</span>';
+      renderS4body();
+    }
+    function renderS4body() {
+      const body = document.getElementById("s4body"); if (!body) return;
+      const n = S.narrative;
+      body.innerHTML = [
+        '<section class="card stack">',
+          textAreaField("entry","Today's entry", n.entry, 7),
+          textAreaField("wins","Wins", n.wins, 3),
+          textAreaField("blockers","Blockers", n.blockers, 3),
+          textAreaField("intention","Tomorrow's intention", n.intention, 3),
+        '</section>',
+        '<section class="card">',
+          '<div class="section-title"><h2>ENTRY TAGS</h2><button type="button" class="small-btn '+(entryTagEdit?"danger-btn":"")+'" onclick="toggleEntryTagEdit()">'+(entryTagEdit?"Done":"Edit tags")+'</button></div>',
+          entryTagsHTML(),
+        '</section>',
+        '<section class="card"><h2>Entry summary</h2>'+summaryHTML()+'</section>'
+      ].join("");
+    }
+    function textAreaField(key, label, value, rows) { return '<div class="field"><label>'+label+'</label><textarea rows="'+rows+'" oninput="setNarrative(\''+key+'\', this.value)">'+esc(value)+'</textarea></div>'; }
+    function setNarrative(key, v) { S.narrative[key] = v; markDirty(); }
+    function entryTagsHTML() {
+      const pool = allTags();
+      if (entryTagEdit) {
+        const chips = pool.length ? pool.map(tag=>'<button type="button" class="tag-chip '+(S.entryTags.includes(tag)?"active":"")+'" onclick="deleteEntryTagFromPool(\''+escAttr(tag)+'\')">'+esc(tag)+' <span class="tag-del"><span aria-hidden="true">✕</span></span></button>').join("") : '<span class="tiny">No tags yet.</span>';
+        return ['<div class="chip-row">'+chips+'</div>',
+          '<div class="inline-add" style="margin-top:12px"><input id="entry-tag-input" type="text" placeholder="#writing-session" onkeydown="entryTagInputKey(event)">',
+          '<button type="button" class="ghost-btn" onclick="toggleEntryTagEdit()" aria-label="Done">&#10005;</button>',
+          '<button type="button" class="primary-btn" onclick="createEntryTag()">Add</button></div>'].join("");
+      }
+      if (!pool.length) return '<p class="tiny">Create tags in edit mode or on tasks.</p>';
+      return '<div class="chip-row">'+pool.map(tag=>'<button type="button" class="tag-chip '+(S.entryTags.includes(tag)?"active":"")+'" onclick="toggleEntryTag(\''+escAttr(tag)+'\')">'+esc(tag)+'</button>').join("")+'</div>';
+    }
+    function summaryHTML() {
+      const alcohol  = S.alcohol.drank ? "Alcohol logged; streak resets" : "Sober "+S.alcohol.soberDays+" day"+plural(S.alcohol.soberDays);
+      const habits   = [S.reading.done?"Read "+readingPct()+"%":"Reading missed", S.meditation.done?"Meditated "+(S.meditation.minutes||0)+"m":"No meditation", S.calligraphy.done?"Calligraphy "+(S.calligraphy.minutes||0)+"m":"No calligraphy"].join(" / ");
+      const vitals   = "Energy "+S.vitals.energy+"/5, mood "+S.vitals.mood+"/5, stress "+stressLabel(S.vitals.stress);
+      const exercise = S.exercise.map(exerciseLabel).join(", ");
+      const tasks    = completedTasks(S);
+      return ['<div class="summary-list">',
+        summaryRow("Sleep", formatHours(S.sleep.hours)+'  ·  Quality '+(S.sleep.qualityScore||50)+'/100'),
+        summaryRow("Alcohol",  alcohol),
+        summaryRow("Habits",   habits),
+        summaryRow("Energy/Mood", vitals),
+        summaryRow("Exercise", exercise||"None"),
+        summaryRow("Tasks",    tasks.done+"/"+tasks.total+" complete"),
+      '</div>'].join("");
+    }
+    function summaryRow(label, value) { return '<div class="summary-row"><strong>'+label+'</strong><span>'+esc(value)+'</span></div>'; }
+    function toggleEntryTagEdit() { entryTagEdit = !entryTagEdit; renderS4body(); }
+    function toggleEntryTag(tag) { S.entryTags.includes(tag)?S.entryTags=S.entryTags.filter(t=>t!==tag):S.entryTags.push(tag); markDirty(); renderS4body(); }
+    function deleteEntryTagFromPool(tag) { deleteTagEverywhere(tag); markDirty(); renderS4body(); }
+    function createEntryTag() { const inp=document.getElementById("entry-tag-input"); const tag=normalizeTag(inp?inp.value:""); if(!tag)return; if(!S.entryTags.includes(tag))S.entryTags.push(tag); markDirty(); renderS4body(); }
+    function entryTagInputKey(e) { if(e.key==="Enter"){e.preventDefault();createEntryTag();} if(e.key==="Escape"){e.preventDefault();toggleEntryTagEdit();} }
+
+    // ── Done screen ───────────────────────────────────────────────────
+    function renderDone() {
+      setHeader("Saved","Entry complete");
+      const habits = [];
+      if (!S.alcohol.drank) habits.push("Sober "+S.alcohol.soberDays+"d");
+      if (S.meditation.done) habits.push("Meditated");
+      if (S.reading.done) habits.push("Read "+readingPct()+"%");
+      if (S.calligraphy.done) habits.push("Calligraphy");
+      const exercise = S.exercise.includes("no-exercise") ? "no exercise logged" : S.exercise.map(exerciseLabel).join(", ");
+      document.getElementById("main-content").innerHTML = ['<div class="done-card">',
+        '<span class="check-ring"><span aria-hidden="true">✓</span></span>',
+        '<h2>Entry saved</h2>',
+        '<span class="badge green"><span aria-hidden="true">🔥</span>'+calculateEntryStreak()+' day streak</span>',
+        '<div class="chip-row" style="justify-content:center">'+habits.map(h=>'<span class="badge">'+esc(h)+'</span>').join("")+'</div>',
+        '<div class="insight-card"><strong>Today in brief</strong><br>'+formatHours(S.sleep.hours)+' sleep, '+(S.alcohol.drank?"alcohol use":"a sober day")+', and '+esc(exercise)+'. Entry synced to Firebase.</div>',
+        '<div class="grid2" style="width:100%">',
+          '<button type="button" class="ghost-btn" onclick="switchView(\'export\')">View data &amp; export</button>',
+          '<button type="button" class="primary-btn" onclick="startNewEntry()">Start new entry</button>',
+        '</div>',
+      '</div>'].join("");
+      renderAI();
+    }
+    function startNewEntry() { S=normaliseState(blankState(todayStr(),false)); addingTask=false; currentStep=0; setHeader("Today","Today's entry"); switchView("entry"); }
+
+    // ── History ───────────────────────────────────────────────────────
+    function renderHistory() {
+      if (!S) return;
+      const rows = sortedEntries().map(entry=>{
+        const tasks=completedTasks(entry), q=dayQuality(entry);
+        const isToday = entry.date === todayStr();
+        return ['<article class="list-row" style="flex-wrap:wrap;gap:10px">',
+          '<div class="list-row-main">',
+            '<div class="list-row-title">'+longDate(entry.date)+(isToday?' <span class="badge green" style="font-size:11px;vertical-align:middle">Today</span>':'')+'</div>',
+            '<div class="list-row-meta">',
+              '<span>'+formatHours(entry.sleep&&entry.sleep.hours)+'</span>',
+              '<span>Sleep quality '+(entry.sleep&&entry.sleep.qualityScore!=null?entry.sleep.qualityScore:'-')+'/100</span>',
+              '<span>Tasks '+tasks.done+'/'+tasks.total+'</span>',
+              '<span>Energy '+(entry.vitals&&entry.vitals.energy||"-")+' / Mood '+(entry.vitals&&entry.vitals.mood||"-")+'</span>',
+            '</div>',
+            entry.narrative&&entry.narrative.entry ? '<div class="note-preview" style="font-size:13px;color:var(--muted);margin-top:4px;max-height:36px;overflow:hidden">'+esc(entry.narrative.entry.slice(0,120))+'</div>' : '',
+            '<div class="chip-row">'+(entry.entryTags||[]).map(tag=>'<span class="tag-chip active">'+esc(tag)+'</span>').join("")+'</div>',
+          '</div>',
+          '<div class="entry-actions" style="align-self:flex-start">',
+            '<span class="quality-badge '+q.key+'">'+q.label+'</span>',
+            '<button type="button" class="small-btn primary-btn" onclick="editEntry(\''+escAttr(entry.date)+'\')">'+'Edit'+'</button>',
+            deleteEntryButtonHTML(entry.date),
+          '</div>',
+        '</article>'].join("");
+      }).join("");
+      document.getElementById("main-content").innerHTML = '<div class="view-stack">'+(rows||'<section class="card"><p class="muted">No saved entries yet.</p></section>')+'</div>';
+    }
+
+    // ── Weekly ────────────────────────────────────────────────────────
+    function renderWeekly() {
+      if (!S) return;
+      const recent = lastNDaysEntries(7);
+      const avgSleep  = average(recent.map(e=>Number(e.sleep&&e.sleep.hours)||0));
+      const totalTasks= recent.reduce((s,e)=>s+completedTasks(e).total,0);
+      const doneTasks = recent.reduce((s,e)=>s+completedTasks(e).done,0);
+      const avgEnergy = average(recent.map(e=>Number(e.vitals&&e.vitals.energy)||0));
+      const completion= totalTasks ? Math.round(doneTasks/totalTasks*100) : 0;
+      document.getElementById("main-content").innerHTML = ['<div class="view-stack">',
+        '<section class="stats-grid">',
+          statCard("Avg sleep", recent.length?formatHours(avgSleep):"0h 0m"),
+          statCard("Task completion", completion+"%"),
+          statCard("Avg energy", recent.length?avgEnergy.toFixed(1)+"/5":"0/5"),
+          statCard("Current streak", calculateEntryStreak()+"d"),
+        '</section>',
+        '<section class="card"><h2>Pattern review</h2><p class="muted">Keep logging — once several days are in, patterns in sleep, habits, tasks, and energy will surface here.</p></section>',
+      '</div>'].join("");
+    }
+    function statCard(label, value) { return '<div class="stat-card"><span>'+label+'</span><strong>'+value+'</strong></div>'; }
+
+    // ── Export / Import ───────────────────────────────────────────────
+    function renderExport() {
+      if (!S) return;
+      const count = Object.keys(entries).length;
+      const rows  = sortedEntries().map(entry=>{
+        const tasks=completedTasks(entry), q=dayQuality(entry);
+        return '<article class="list-row"><div class="list-row-main"><div class="list-row-title">'+longDate(entry.date)+'</div><div class="list-row-meta"><span>'+formatHours(entry.sleep&&entry.sleep.hours)+'</span><span>Tasks '+tasks.done+'/'+tasks.total+'</span></div></div><div class="entry-actions"><span class="quality-badge '+q.key+'">'+q.label+'</span>'+deleteEntryButtonHTML(entry.date)+'</div></article>';
+      }).join("");
+      document.getElementById("main-content").innerHTML = ['<div class="view-stack">',
+        '<section class="card">',
+          '<div class="section-title"><h2>Export</h2><span class="badge">'+count+' entries</span></div>',
+          '<p class="tiny">Download a local backup of all your Firebase data.</p>',
+          '<button type="button" class="primary-btn" onclick="downloadJSON()"><span aria-hidden="true">↓</span><span>Download JSON</span></button>',
+        '</section>',
+        '<section class="card">',
+          '<h2>Import</h2>',
+          '<div class="drop-zone" onclick="document.getElementById(\'import-file\').click()" ondragover="event.preventDefault(); this.classList.add(\'dragging\')" ondragleave="this.classList.remove(\'dragging\')" ondrop="handleImportDrop(event)">',
+            '<span aria-hidden="true" style="font-size:28px">📂</span>',
+            '<span>Drop a JSON backup here or tap to choose a file</span>',
+          '</div>',
+        '</section>',
+        '<section class="card"><h2>Stored entries</h2><div class="view-stack">'+(rows||'<p class="muted">No entries yet.</p>')+'</div></section>',
+        '<section class="card">',
+          '<h2>Storage info</h2>',
+          '<p class="muted">Your data is stored in Firebase Firestore and syncs across all devices automatically. Export a JSON backup as an extra safety net.</p>',
+        '</section>',
+        '<section class="card">',
+          '<div class="section-title"><h2>Danger zone</h2><span class="badge red">Deletes from Firebase</span></div>',
+          '<button type="button" id="clear-btn" class="danger-btn" onclick="clearAllEntries()">Clear all entries</button>',
+        '</section>',
+      '</div>'].join("");
+    }
+    function downloadJSON() {
+      const payload = { app:"Compound Journal", version:"2.0.0", exportedAt:new Date().toISOString(), totalEntries:Object.keys(entries).length, entries:sortedEntries() };
+      const blob = new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
+      const url  = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href=url; a.download="compound-journal-"+todayStr()+".json";
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      showToast("JSON export prepared.");
+    }
+    function handleImportDrop(e) { e.preventDefault(); e.currentTarget.classList.remove("dragging"); handleImportFiles(e.dataTransfer.files); }
+    async function handleImportFiles(files) {
+      const file = files&&files[0]; if (!file) return;
+      if (!file.name.toLowerCase().endsWith(".json")) { showToast("Choose a .json backup file."); return; }
+      const reader = new FileReader();
+      reader.onload = async function() {
+        try {
+          const parsed   = JSON.parse(reader.result);
+          const incoming = Array.isArray(parsed.entries) ? parsed.entries : Object.values(parsed||{});
+          let added = 0;
+          for (const entry of incoming) {
+            if (!entry||!entry.date||entries[entry.date]) continue;
+            entries[entry.date] = normaliseImported(entry);
+            await writeEntry(entry.date, entries[entry.date]);
+            added++;
+          }
+          if (entries[S.date]) S = normaliseState(deepMerge(blankState(S.date,false), entries[S.date]));
+          updateSidebarStreak(); renderExport();
+          showToast("Imported "+added+" new entr"+(added===1?"y.":"ies."));
+        } catch(e) { showToast("Could not parse that JSON file."); }
+      };
+      reader.readAsText(file);
+    }
+    function normaliseImported(entry) { return normaliseState(deepMerge(blankState(entry.date||todayStr(),false),entry)); }
+    async function clearAllEntries() {
+      const btn = document.getElementById("clear-btn");
+      if (!clearArmed) {
+        clearArmed = true;
+        if (btn) { btn.textContent="Tap again to confirm"; btn.style.background="#E24B4A"; btn.style.color="white"; }
+        setTimeout(()=>{ clearArmed=false; if(activeView==="export") renderExport(); }, 2000); return;
+      }
+      clearArmed = false;
+      const dates = Object.keys(entries);
+      await clearAllFirebase(dates);
+      entries = {}; S = normaliseState(blankState(todayStr(),false));
+      updateSidebarStreak(); renderExport(); showToast("All entries cleared.");
+    }
+    function deleteEntryButtonHTML(date) {
+      const armed = deleteEntryArmedDate===date;
+      return '<button type="button" class="danger-btn" onclick="deleteEntry('+jsArg(date)+')"><span aria-hidden="true">'+(armed?'⚠':'🗑')+'</span><span>'+(armed?"Confirm delete":"Delete")+'</span></button>';
+    }
+    async function deleteEntry(date) {
+      if (!entries[date]) { deleteEntryArmedDate=""; if(activeView==="history")renderHistory(); if(activeView==="export")renderExport(); return; }
+      if (deleteEntryArmedDate!==date) {
+        deleteEntryArmedDate=date;
+        if(activeView==="history")renderHistory(); if(activeView==="export")renderExport();
+        setTimeout(()=>{ if(deleteEntryArmedDate===date){deleteEntryArmedDate=""; if(activeView==="history")renderHistory(); if(activeView==="export")renderExport();} }, 2000); return;
+      }
+      delete entries[date]; await removeEntry(date);
+      deleteEntryArmedDate="";
+      if (date===S.date) S=normaliseState(blankState(todayStr(),false));
+      updateSidebarStreak(); renderAI();
+      if(activeView==="history")renderHistory(); if(activeView==="export")renderExport();
+      showToast("Deleted "+date+".");
+    }
+
+    // ── AI panel ──────────────────────────────────────────────────────
+    function renderAI() {
+      const panel = document.getElementById("ai-content"); if (!panel||!S) return;
+      const streak = calculateEntryStreak(), tasks = completedTasks(S), cards = [];
+      if (Number(S.sleep.hours)>=7) cards.push('<div class="ai-card green"><strong>Pattern</strong><br>Sleep is in the useful range today. Watch whether energy and task completion rise on these days.</div>');
+      if (S.alcohol.drank) cards.push('<div class="ai-card amber"><strong>Warning</strong><br>Alcohol was logged today — tomorrow is a good checkpoint for sleep quality and stress.</div>');
+      if (Number(S.vitals.energy)>=4&&Number(S.vitals.mood)>=4) cards.push('<div class="ai-card green"><strong>High output day</strong><br>Energy and mood are both elevated. Note what made this happen.</div>');
+      if (S.vitals.stress==="very-high") cards.push('<div class="ai-card amber"><strong>Stress flagged</strong><br>Very-high stress was logged. Cross-reference sleep and tasks to find the pattern.</div>');
+      if (tasks.total>0&&tasks.done===tasks.total) cards.push('<div class="ai-card green"><strong>Full completion</strong><br>Every task is done. This is a data point worth keeping.</div>');
+      if (streak>0) cards.push('<div class="ai-card blue"><strong>Streak</strong><br>You have '+streak+' consecutive logged day'+plural(streak)+'. The dataset is compounding.</div>');
+      if (!cards.length) cards.push('<div class="ai-card"><strong>Awaiting signal</strong><br>Keep filling the structured fields so patterns have enough clean data to emerge.</div>');
+      panel.innerHTML = [cards.join(""),
+        '<div class="ai-card"><div class="kicker">Stats</div>',
+          aiStat("Sleep",formatHours(S.sleep.hours)),
+          aiStat("Energy/Mood",S.vitals.energy+"/"+S.vitals.mood),
+          aiStat("Tasks done",tasks.done+"/"+tasks.total),
+          aiStat("Sober streak",S.alcohol.soberDays+"d"),
+        '</div>'
+      ].join("");
+    }
+    function aiStat(label, value) { return '<div class="ai-stat"><span>'+label+'</span><strong>'+value+'</strong></div>'; }
+    function updateSidebarStreak() { if(!entries) return; const el=document.getElementById("sidebar-streak"); if(el) el.textContent=calculateEntryStreak(); }
+
+    // ── Alcohol logic ─────────────────────────────────────────────────
+    function deriveAlcohol() { deriveAlcoholFor(S); }
+    function deriveAlcoholFor(state) {
+      if (!state||!state.alcohol) return;
+      if (state.alcohol.drank) { state.alcohol.soberDays=0; state.alcohol.lastDrink=state.date; return; }
+      const previous = previousSoberDays(state.date);
+      state.alcohol.soberDays = previous+1;
+      state.alcohol.lastDrink = findLastDrinkBefore(state.date)||"";
+    }
+    function previousSoberDays(date) { const y=addDays(date,-1); const e=entries[y]; if(!e||!e.alcohol||e.alcohol.drank)return 0; return Number(e.alcohol.soberDays)||soberStreakEnding(y); }
+    function soberStreakEnding(date) { let count=0,cursor=date; for(let i=0;i<370;i++){const e=entries[cursor]; if(!e||!e.alcohol||e.alcohol.drank)break; count++; cursor=addDays(cursor,-1);} return count; }
+    function findLastDrinkBefore(date) { const dates=Object.keys(entries).filter(d=>d<date).sort().reverse(); for(const d of dates){if(entries[d]&&entries[d].alcohol&&entries[d].alcohol.drank)return d;} return ""; }
+    function nextMilestone(days) { for(const m of MILESTONES){if(days<m)return m;} return days+1; }
+
+    // ── Utility ───────────────────────────────────────────────────────
+    function calculateEntryStreak() { let count=0,cursor=todayStr(); if(!entries[cursor])cursor=addDays(cursor,-1); for(let i=0;i<1000;i++){if(!entries[cursor])break; count++; cursor=addDays(cursor,-1);} return count; }
+    function allTags() {
+      const set=new Set();
+      Object.values(entries).forEach(e=>{ (e.entryTags||[]).forEach(t=>{if(t)set.add(t);}); (e.tasks||[]).forEach(t=>{(t.tags||[]).forEach(g=>{if(g)set.add(g);});}); });
+      (S.entryTags||[]).forEach(t=>{if(t)set.add(t);}); (S.tasks||[]).forEach(t=>{(t.tags||[]).forEach(g=>{if(g)set.add(g);});});
+      return Array.from(set).sort();
+    }
+    function deleteTagEverywhere(tag) {
+      S.entryTags=S.entryTags.filter(t=>t!==tag); S.tasks.forEach(t=>{t.tags=t.tags.filter(g=>g!==tag);});
+      Object.keys(entries).forEach(d=>{ const e=entries[d]; e.entryTags=(e.entryTags||[]).filter(t=>t!==tag); (e.tasks||[]).forEach(t=>{t.tags=(t.tags||[]).filter(g=>g!==tag);}); });
+    }
+    function sortedEntries() { return Object.values(entries).sort((a,b)=>String(b.date).localeCompare(String(a.date))); }
+    function lastNDaysEntries(n) { const end=todayStr(),start=addDays(end,-(n-1)); return sortedEntries().filter(e=>e.date>=start&&e.date<=end); }
+    function completedTasks(entry) { const tasks=Array.isArray(entry.tasks)?entry.tasks:[]; return {total:tasks.length, done:tasks.filter(t=>t.done).length}; }
+    function dayQuality(entry) {
+      const tasks=completedTasks(entry), completion=tasks.total?tasks.done/tasks.total:0.5;
+      let score=0;
+      if(Number(entry.sleep&&entry.sleep.hours)>=7)score++;
+      if(entry.alcohol&&!entry.alcohol.drank)score++;
+      if(entry.vitals&&Number(entry.vitals.energy)>=3&&Number(entry.vitals.mood)>=3)score++;
+      if(completion>=0.6)score++;
+      if(entry.vitals&&(entry.vitals.stress==="high"||entry.vitals.stress==="very-high"))score--;
+      if(score>=3)return{key:"good",label:"Good"};
+      if(score>=1)return{key:"okay",label:"Okay"};
+      return{key:"tough",label:"Tough"};
+    }
+    function readingPct() { return readingPctFor(S); }
+    function readingPctFor(state) {
+      const page=Number(state&&state.reading?state.reading.page:0)||0;
+      const total=Number(state&&state.reading?state.reading.total:0)||0;
+      if(!state||!state.reading||!state.reading.done||total<=0)return 0;
+      return clamp(Math.round(page/total*100),0,100);
+    }
+    function sleepQuality(hours) { hours=Number(hours)||0; if(hours<5)return{label:"Poor",tone:"red"}; if(hours<7)return{label:"Short",tone:"amber"}; if(hours<=9)return{label:"Good ✓",tone:"green"}; return{label:"Oversleep",tone:"blue"}; }
+    function calcSleepHours(bed,wake) { const b=timeToMinutes(bed),w=timeToMinutes(wake); if(b===null||w===null)return S.sleep.hours; let diff=w-b; if(diff<=0)diff+=24*60; return clamp(diff/60,0,12); }
+    function timeToMinutes(v) { if(!v||!v.includes(":"))return null; const parts=v.split(":").map(Number); if(parts.some(isNaN))return null; return parts[0]*60+parts[1]; }
+    function formatHours(v) { const total=Math.round((Number(v)||0)*60); return Math.floor(total/60)+"h "+(total%60)+"m"; }
+    function exerciseLabel(v) { return({"no-exercise":"No exercise",jogging:"Jogging",swimming:"Swimming",strength:"Strength",other:"Other"})[v]||v; }
+    function stressLabel(v) { return({low:"Low",medium:"Medium",high:"High","very-high":"Very high"})[v]||v; }
+    function normalizeTag(v) { const c=String(v||"").trim().toLowerCase().replace(/^#+/,"").replace(/\s+/g,"-").replace(/[^a-z0-9-_]/g,"").replace(/-+/g,"-"); return c?"#"+c:""; }
+    function average(values) { const valid=values.filter(v=>Number(v)>0); if(!valid.length)return 0; return valid.reduce((s,v)=>s+Number(v),0)/valid.length; }
+    function todayStr() { return toYMD(new Date()); }
+    function toYMD(date) { return date.getFullYear()+"-"+String(date.getMonth()+1).padStart(2,"0")+"-"+String(date.getDate()).padStart(2,"0"); }
+    function fromYMD(v) { const p=String(v).split("-").map(Number); return new Date(p[0],p[1]-1,p[2]); }
+    function addDays(v,n) { const d=fromYMD(v); d.setDate(d.getDate()+n); return toYMD(d); }
+    function longDate(v) { return fromYMD(v).toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric",year:"numeric"}); }
+    function clamp(v,min,max) { return Math.max(min,Math.min(max,v)); }
+    function plural(n) { return Number(n)===1?"":"s"; }
+    function esc(v) { return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;"); }
+    function escAttr(v) { return esc(v); }
+    function jsArg(v) { return escAttr(JSON.stringify(String(v==null?"":v))); }
+    function showToast(msg) { const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove("show"),2600); }
+  </script>
+</body>
+</html>
